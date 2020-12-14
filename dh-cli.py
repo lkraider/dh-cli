@@ -1,6 +1,7 @@
 import cmd
 import json
 import uuid
+import shutil
 import argparse
 import dataclasses
 import urllib.parse
@@ -51,11 +52,11 @@ class DNS(DHCmd):
 
     prompt = 'dh.dns % '
     _cache = {}
-    _zones = set()
+    _zones = []
 
     def do_ls(self, arg):
         self.refresh_records()
-        print(self._zones)
+        _print_columns(self._zones)
 
     def refresh_records(self):
         if self._cache:
@@ -65,14 +66,27 @@ class DNS(DHCmd):
         self._parse_cache()
 
     def _parse_cache(self):
-        self._zones = set(k['zone'] for k in self._cache['data'])
+        self._zones = sorted(set(k['zone'] for k in self._cache['data']))
 
 
-def _make_request(cmd: str, opts: dict=None, **args):
+def _print_columns(values, col_align=8):
+    max_width = shutil.get_terminal_size((80, 20)).columns
+    value_width = max(len(i) for i in values)
+    col_width = value_width + (col_align - value_width % col_align)
+    col_layout = '{:<%s}' % col_width
+    max_cols = max_width // col_width
+    for i, v in enumerate(values):
+        end = '' if (i + 1) % max_cols else '\n'
+        print(col_layout.format(v), end=end)
+    if not end:
+        print('\n', end='')
+
+
+def _make_request(cmd: str, opts: dict=None, **kwargs):
     opts = opts or OPTS
     api = DHAPI(cmd=cmd, **opts)
-    args.update(api.args_dict())
-    url = _build_url(api.url, args)
+    kwargs.update(api.args_dict())
+    url = _build_url(api.url, kwargs)
     req = urllib.request.Request(url)
     print(req.full_url)
     res = urllib.request.urlopen(req)
