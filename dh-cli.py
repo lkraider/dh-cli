@@ -95,6 +95,18 @@ class DNSTreePathNotFound(Exception):
     pass
 
 
+@dataclass
+class DNSRecord:
+
+    account_id: int
+    zone: str
+    record: str
+    type: str
+    value: str
+    comment: str
+    editable: bool
+
+
 class DNS(DHCmd):
 
     _prompt = 'dh.dns {} % '
@@ -149,7 +161,7 @@ class DNS(DHCmd):
     @staticmethod
     def _format_name(record, limit=15):
         type_ = record['type']
-        value = record['value'].replace(' ', '_')
+        value = record['value'].replace(' ', '_').replace('/', '_')
         split = (round((limit-2)/2+0.5), round((limit-2)/2-0.5))
         value = len(value)>limit and value[:split[0]]+'..'+value[-split[1]:] or value
         return '{}_{}'.format(type_, value)
