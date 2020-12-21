@@ -73,10 +73,25 @@ class DNSTree:
         return self.view(path).items()
 
     def view(self, path: str=None) -> dict:
+        return self._recursive_view(self.tree, self.get_fullpath(path))
+
+    def get_record(self, path: str=None) -> DNSRecord:
+        entries = self.view(path).values()
+        if len(entries) > 1:
+            raise DNSTreeMultipleRecordsFound(self.show_fullpath(path))
+        record = list(entries)[0]
+        if not isinstance(record, DNSRecord):
+            raise DNSTreeNotARecord(self.show_fullpath(path))
+        return record
+
+    def get_fullpath(self, path: str=None) -> list:
         root = [] if path and path.startswith('/') else self.path
         subpath = list(filter(None, path.split('/'))) if path else []
         fullpath = root + subpath
-        return self._recursive_view(self.tree, fullpath)
+        return fullpath
+
+    def show_fullpath(self, path: str=None) -> str:
+        return '/' + '/'.join(self.get_fullpath(path))
 
     @classmethod
     def _recursive_view(cls, data: dict, path: list, parent: str=None) -> dict:
@@ -119,6 +134,12 @@ class DNSTree:
 class DNSTreePathNotFound(Exception):
     pass
 
+class DNSTreeMultipleRecordsFound(Exception):
+    pass
+
+class DNSTreeNotARecord(Exception):
+    pass
+
 
 class DHCmd(cmd.Cmd):
 
@@ -149,17 +170,20 @@ class DNS(DHCmd):
     @property
     def prompt(self):
         path = self._tree.path
-        return self._prompt.format(path[-1] if path else '')
+        return self._prompt.format(path[-1] if path else '/')
 
     def do_cd(self, arg):
         self.refresh_records()
         if arg == '..':
             self._tree.path.pop()
+            return
         elif arg == '/':
             self._tree.path.clear()
-        elif arg in self._tree.view():
-            self._tree.path.append(arg)
-        else:
+            return
+        try:
+            self._tree.view(arg)
+            self._tree.path = self._tree.get_fullpath(arg)
+        except DNSTreePathNotFound as path:
             print('cd: no such zone or record: {}'.format(arg))
 
     def do_ls(self, arg):
@@ -170,17 +194,33 @@ class DNS(DHCmd):
         except DNSTreePathNotFound as path:
             print('ls: no such zone or record: {}'.format(path))
 
+    def do_pwd(self, arg):
+        if arg:
+            print('pwd: too many arguments')
+            return
+        print(self._tree.show_fullpath())
+
     def do_cat(self, arg):
         self.refresh_records()
         try:
-            entries = self._tree.values(arg)
-            if len(entries) > 1:
-                print('cat: {}: is not a single record'.format(arg))
-                return
-            record = list(entries)[0]
+            record = self._tree.get_record(arg)
             record.print_table()
+        except DNSTreeNotARecord as path:
+            print('cat: {}: is not a record'.format(path))
+        except DNSTreeMultipleRecordsFound as path:
+            print('cat: {}: has multiple records'.format(path))
         except DNSTreePathNotFound as path:
-            print('ls: no such zone or record: {}'.format(path))
+            print('cat: no such zone or record: {}'.format(path))
+
+    def do_edit(self, arg):
+        self.refresh_records()
+        # TODO
+        pass
+
+    def do_add(self, arg):
+        self.refresh_records()
+        # TODO
+        pass
 
     def refresh_records(self):
         if self._cache:
