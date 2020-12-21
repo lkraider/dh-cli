@@ -33,24 +33,25 @@ class DHAPI:
         return {k: v for k, v in args.items() if v is not None}
 
 
-class DHCmd(cmd.Cmd):
+@dataclass
+class DNSRecord:
 
-    def emptyline(self):
-        pass
+    account_id: str
+    zone: str
+    record: str
+    type: str
+    value: str
+    comment: str
+    editable: str
 
-    def do_login(self, arg):
-        pass
+    _editable_types = ['A', 'CNAME', 'NS', 'PTR', 'NAPTR', 'SRV', 'TXT', 'AAAA']
+    has_changes = False
+    error = None
 
-    def do_exit(self, arg):
-        return True
-
-
-class DHMain(DHCmd):
-
-    prompt = 'dh % '
-
-    def do_dns(self, arg):
-        return DNS().cmdloop()
+    def print_table(self):
+        row_layout = '  {name:<12}:  {value}'
+        for f in dataclasses.fields(self):
+            print(row_layout.format(name=f.name, value=getattr(self, f.name)))
 
 
 class DNSTree:
@@ -91,30 +92,52 @@ class DNSTree:
             return cls._recursive_view(data[key], path, key)
         return data
 
+    def update(self, response_data):
+        data = response_data
+        zones, records, names = set(), set(), list()
+        for k in data:
+            zones.add(k['zone'])
+            records.add((k['zone'], k['record']))
+            names.append((k['record'], self._format_name(k), DNSRecord(**k)))
+        self.tree = {
+            zone: {
+                record[1]: {name[1]: name[2]
+                for name in names if name[0] == record[1]}
+                for record in records if record[0] == zone}
+                for zone in zones
+        }
+
+    @staticmethod
+    def _format_name(record, limit=15):
+        type_ = record['type']
+        value = record['value'].replace(' ', '_').replace('/', '_')
+        split = (round((limit-2)/2+0.5), round((limit-2)/2-0.5))
+        value = len(value)>limit and value[:split[0]]+'..'+value[-split[1]:] or value
+        return '{}_{}'.format(type_, value)
+
 
 class DNSTreePathNotFound(Exception):
     pass
 
 
-@dataclass
-class DNSRecord:
+class DHCmd(cmd.Cmd):
 
-    account_id: str
-    zone: str
-    record: str
-    type: str
-    value: str
-    comment: str
-    editable: str
+    def emptyline(self):
+        pass
 
-    _editable_types = ['A', 'CNAME', 'NS', 'PTR', 'NAPTR', 'SRV', 'TXT', 'AAAA']
-    has_changes = False
-    error = None
+    def do_login(self, arg):
+        pass
 
-    def print_table(self):
-        row_layout = '  {name:<12}:  {value}'
-        for f in dataclasses.fields(self):
-            print(row_layout.format(name=f.name, value=getattr(self, f.name)))
+    def do_exit(self, arg):
+        return True
+
+
+class DHMain(DHCmd):
+
+    prompt = 'dh % '
+
+    def do_dns(self, arg):
+        return DNS().cmdloop()
 
 
 class DNS(DHCmd):
@@ -170,26 +193,7 @@ class DNS(DHCmd):
         if self._cache.get('result') != 'success':
             logger.error('DreamHost API response error')
             return
-        data = self._cache['data']
-        zones = set(k['zone'] for k in data)
-        records = set((k['zone'], k['record']) for k in data)
-        names = list((k['record'], self._format_name(k), DNSRecord(**k)) for k in data)
-        data = {
-            zone: {
-                record[1]: {name[1]: name[2]
-                for name in names if name[0] == record[1]}
-                for record in records if record[0] == zone}
-                for zone in zones
-        }
-        self._tree.tree = data
-
-    @staticmethod
-    def _format_name(record, limit=15):
-        type_ = record['type']
-        value = record['value'].replace(' ', '_').replace('/', '_')
-        split = (round((limit-2)/2+0.5), round((limit-2)/2-0.5))
-        value = len(value)>limit and value[:split[0]]+'..'+value[-split[1]:] or value
-        return '{}_{}'.format(type_, value)
+        self._tree.update(self._cache['data'])
 
 
 def _print_columns(values: list, col_align: int=8):
@@ -222,12 +226,6 @@ def _build_url(url: str, args: dict) -> str:
     url_parts = list(urllib.parse.urlparse(url))
     url_parts[4] = urllib.parse.urlencode(args)
     return urllib.parse.urlunparse(url_parts)
-
-
-def _send_request(req) -> str:
-    res = urllib.request.urlopen(req)
-    body = res.read().decode('UTF-8')
-    return body
 
 
 def _make_args():
