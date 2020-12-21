@@ -4,6 +4,7 @@ import uuid
 import shutil
 import logging
 import argparse
+import collections
 import dataclasses
 import urllib.parse
 import urllib.request
@@ -61,13 +62,13 @@ class DNSTree:
         self.tree = tree or {}
         self.path = path or []
 
-    def keys(self, path: str=None) -> list:
+    def keys(self, path: str=None) -> collections.abc.KeysView:
         return self.view(path).keys()
 
-    def values(self, path: str=None) -> list:
+    def values(self, path: str=None) -> collections.abc.ValuesView:
         return self.view(path).values()
 
-    def items(self, path: str=None) -> list:
+    def items(self, path: str=None) -> collections.abc.ItemsView:
         return self.view(path).items()
 
     def view(self, path: str=None) -> dict:
@@ -78,8 +79,8 @@ class DNSTree:
 
     @classmethod
     def _recursive_view(cls, data: dict, path: list, parent: str=None) -> dict:
-        if not isinstance(data, dict):
-            return {parent: None}
+        if isinstance(data, DNSRecord):
+            return {parent: data}
         path = path.copy()
         key = path.pop(0) if path else None
         if key is not None:
@@ -98,13 +99,22 @@ class DNSTreePathNotFound(Exception):
 @dataclass
 class DNSRecord:
 
-    account_id: int
+    account_id: str
     zone: str
     record: str
     type: str
     value: str
     comment: str
-    editable: bool
+    editable: str
+
+    _editable_types = ['A', 'CNAME', 'NS', 'PTR', 'NAPTR', 'SRV', 'TXT', 'AAAA']
+    has_changes = False
+    error = None
+
+    def print_table(self):
+        row_layout = '  {name:<12}:  {value}'
+        for f in dataclasses.fields(self):
+            print(row_layout.format(name=f.name, value=getattr(self, f.name)))
 
 
 class DNS(DHCmd):
@@ -119,8 +129,11 @@ class DNS(DHCmd):
         return self._prompt.format(path[-1] if path else '')
 
     def do_cd(self, arg):
+        self.refresh_records()
         if arg == '..':
             self._tree.path.pop()
+        elif arg == '/':
+            self._tree.path.clear()
         elif arg in self._tree.view():
             self._tree.path.append(arg)
         else:
@@ -131,6 +144,18 @@ class DNS(DHCmd):
         try:
             keys = sorted(self._tree.keys(arg))
             _print_columns(keys)
+        except DNSTreePathNotFound as path:
+            print('ls: no such zone or record: {}'.format(path))
+
+    def do_cat(self, arg):
+        self.refresh_records()
+        try:
+            entries = self._tree.values(arg)
+            if len(entries) > 1:
+                print('cat: {}: is not a single record'.format(arg))
+                return
+            record = list(entries)[0]
+            record.print_table()
         except DNSTreePathNotFound as path:
             print('ls: no such zone or record: {}'.format(path))
 
@@ -148,7 +173,7 @@ class DNS(DHCmd):
         data = self._cache['data']
         zones = set(k['zone'] for k in data)
         records = set((k['zone'], k['record']) for k in data)
-        names = list((k['record'], self._format_name(k), k) for k in data)
+        names = list((k['record'], self._format_name(k), DNSRecord(**k)) for k in data)
         data = {
             zone: {
                 record[1]: {name[1]: name[2]
