@@ -59,6 +59,8 @@ class DNSTree:
     tree: dict = None
     path: list = None
 
+    _record_marker = '._record'
+
     def __init__(self, tree=None, path=None):
         self.tree = tree or {}
         self.path = path or []
@@ -76,10 +78,7 @@ class DNSTree:
         return self._recursive_view(self.tree, self.get_fullpath(path))
 
     def get_record(self, path: str=None) -> DNSRecord:
-        entries = self.view(path).values()
-        if len(entries) > 1:
-            raise DNSTreeMultipleRecordsFound(self.show_fullpath(path))
-        record = list(entries)[0]
+        record = self.view(path).get(self._record_marker, None)
         if not isinstance(record, DNSRecord):
             raise DNSTreeNotARecord(self.show_fullpath(path))
         return record
@@ -96,7 +95,7 @@ class DNSTree:
     @classmethod
     def _recursive_view(cls, data: dict, path: list, parent: str=None) -> dict:
         if isinstance(data, DNSRecord):
-            return {parent: data}
+            return {cls._record_marker: data}
         path = path.copy()
         key = path.pop(0) if path else None
         if key is not None:
@@ -132,9 +131,6 @@ class DNSTree:
 
 
 class DNSTreePathNotFound(Exception):
-    pass
-
-class DNSTreeMultipleRecordsFound(Exception):
     pass
 
 class DNSTreeNotARecord(Exception):
@@ -181,16 +177,22 @@ class DNS(DHCmd):
             self._tree.path.clear()
             return
         try:
-            self._tree.view(arg)
-            self._tree.path = self._tree.get_fullpath(arg)
+            keys = self._tree.keys(arg)
+            if self._tree._record_marker in keys:  # path is a data record
+                print('cd: not a directory: {}'.format(arg))
+            else:  # path is a directory
+                self._tree.path = self._tree.get_fullpath(arg)
         except DNSTreePathNotFound as path:
             print('cd: no such zone or record: {}'.format(arg))
 
     def do_ls(self, arg):
         self.refresh_records()
         try:
-            keys = sorted(self._tree.keys(arg))
-            _print_columns(keys)
+            keys = self._tree.keys(arg)
+            if self._tree._record_marker in keys:  # path is a data record
+                print(arg, end='\n' if arg else '')
+            else:  # path is a directory
+                _print_columns(sorted(keys))
         except DNSTreePathNotFound as path:
             print('ls: no such zone or record: {}'.format(path))
 
@@ -207,8 +209,6 @@ class DNS(DHCmd):
             record.print_table()
         except DNSTreeNotARecord as path:
             print('cat: {}: is not a record'.format(path))
-        except DNSTreeMultipleRecordsFound as path:
-            print('cat: {}: has multiple records'.format(path))
         except DNSTreePathNotFound as path:
             print('cat: no such zone or record: {}'.format(path))
 
@@ -255,10 +255,10 @@ def _make_request(cmd: str, opts: dict=None, **kwargs):
     kwargs.update(api.args_dict())
     url = _build_url(api.url, kwargs)
     req = urllib.request.Request(url)
-    logger.debug(req.full_url)
+    logger.info(req.full_url)
     res = urllib.request.urlopen(req)
     data = json.load(res)
-    logger.debug(data.get('result'))
+    logger.info(data.get('result'))
     return data
 
 
